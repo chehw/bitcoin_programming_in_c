@@ -119,6 +119,8 @@ void * get_in_addr(struct sockaddr * sa)
 	return NULL;
 }
 
+int  start_debug(int new_fd, struct sockaddr_storage * peer_addr);
+
 int main(int argc, char ** argv)
 {
 	int sockfd, new_fd;
@@ -128,6 +130,7 @@ int main(int argc, char ** argv)
 	pid_t cpid;
 	int ret;
 	char ip[INET6_ADDRSTRLEN] = "";
+	
 
 	const char * serv_ip = "localhost";
 	const char * port = SERVER_DEBUG_PORT;
@@ -194,6 +197,9 @@ int main(int argc, char ** argv)
 			close(sockfd); // child process doesn't need this
 
 			ret = start_debug(new_fd, &peer_addr);
+			printf("end debug.\n");
+			close(new_fd);
+			
 			exit(ret);
 		}
 
@@ -212,6 +218,39 @@ int  start_debug(int new_fd, struct sockaddr_storage * peer_addr)
 {
 	int ret = 0;
 	printf("start debug...\n");
-	close(new_fd);
+	
+	ssize_t cb;
+	unsigned char buffer[4096 + 1];
+	char json[4096] = "";
+	char * p = json;
+	
+	int cbWrite = 0;
+	while(1)
+	{
+		cb = recv(new_fd, buffer, sizeof(buffer) - 1, 0);
+		if(cb < 0 || 0 == cb) 
+		{
+			printf("cb = %d, disconnected.\n", cb);
+			break;
+		}
+		
+	//	buffer[4096] = 0;
+		printf("cb = %d\n", cb);
+		if(cb) 
+		{
+			buffer[cb] = 0;
+			printf("msg(%d): %s\n", cb, (char *)buffer);
+			if(strcmp((char *)buffer, "debug_exit") == 0)
+			{
+				break;
+			}
+			cbWrite = sprintf(p, "[\"status\": \"ok\", \"message\": \"debug\"]");
+			p += cbWrite;
+			
+			cb = send(new_fd, json, cbWrite, 0);
+			if(cb != cbWrite) break;
+		}
+	}
+	
 	return 0;
 }
