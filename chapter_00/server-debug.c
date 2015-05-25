@@ -43,15 +43,27 @@
 #include <wait.h>
 #include <signal.h>
 
+#include <sys/uio.h>
+
+#include "util.h"
+#include "satoshi-protocol.h"
+
 #define SERVER_DEBUG_PORT ("58333")
 #define BACKLOG (10)
+
+typedef int RETCODE;
+
+#define MSG_DEBUG ("debug")
+#define SERVER_DEBUG_USER_AGENT "/satoshi-0.9.2/debug_server/"
+
+char err_msg[256] = "";
 
 int socket_bind(const char * ip, const char * port)
 {
 	int sockfd = -1;
 	struct addrinfo hints, *servinfo, * p;
 
-	socklen_t sin_len;
+	// socklen_t sin_len;
 	int yes = 1;
 	int ret;
 
@@ -101,6 +113,9 @@ void sigchld_handler(int s)
 {
 	while(waitpid(-1, NULL, WNOHANG) > 0)
 	{
+		/* UNSAFE: This handler uses non-async-signal-safe functions printf()
+		 * just for debug
+		 */
 		printf("child process terminated (%d).\n", s);
 	}
 }
@@ -214,43 +229,308 @@ int main(int argc, char ** argv)
 
 }
 
-int  start_debug(int new_fd, struct sockaddr_storage * peer_addr)
+
+ssize_t send_message(int sockfd, SATOSHI_MESSAGE_HEADER_t * p_hdr, const void * payload, uint32_t cbPayload)
 {
-	int ret = 0;
-	printf("start debug...\n");
+	struct iovec msgdata[2] = {{0}};
+	hash256_t h_checksum;
+	ssize_t cb_sent = 0;
 	
-	ssize_t cb;
-	unsigned char buffer[4096 + 1];
+	assert(NULL != p_hdr);
+	
+	err_msg[0] = '\0';
+	
+	if(NULL == payload)
+	{
+		cbPayload = 0;
+	}
+	
+	msgdata[0].iov_base = p_hdr;
+	msgdata[0].iov_len = sizeof(SATOSHI_MESSAGE_HEADER_t);
+	msgdata[1].iov_base = (unsigned char *)payload;
+	msgdata[1].iov_len = cbPayload;
+	
+	p_hdr->length = cbPayload;
+	
+	if(0 == cbPayload)
+	{
+		p_hdr->checksum = hash256_checksum_null;
+	}else
+	{	
+		if(hash256(payload, cbPayload, h_checksum.vch) != sizeof(hash256_t))
+		{
+			strncpy(err_msg, "hash256 error.\n", sizeof(err_msg));
+			perror("hash256");
+			return -1;
+		}
+		memcpy(&p_hdr->checksum_b[0], &h_checksum.vch[0], 4);
+	}
+	
+	cb_sent = writev(sockfd, msgdata, 2);
+	return cb_sent;
+}
+
+
+ssize_t recv_message(int sockfd, SATOSHI_MESSAGE_HEADER_t * p_hdr, unsigned char ** pp_payload, uint32_t * p_cbPayload, hash256_t * p_hash)
+{
+	assert(NULL != p_hdr && NULL != pp_payload && NULL != p_cbPayload);
+	int cb;
+//	hash256_t h_checksum;
+	unsigned char * payload = NULL;
+	uint32_t cbPayload = 0;
+	
+	err_msg[0] = '\0';
+	
+	cb = read(sockfd, p_hdr, sizeof(SATOSHI_MESSAGE_HEADER_t));
+	if(cb <= 0)
+	{
+		perror("socket");
+		return -1;
+	}
+	
+	if(cb != sizeof(SATOSHI_MESSAGE_HEADER_t))
+	{
+		strncpy(err_msg, "Invalid Message Header.\n", sizeof(err_msg));
+		fprintf(stderr, "Invalid Message Header.\n");		
+		return 0;
+	}
+	
+	cb = 0;
+	if(p_hdr->length)
+	{
+		payload = (unsigned char *)malloc(p_hdr->length);
+		if(NULL == payload)
+		{
+			perror("malloc");
+			return -1;
+		}
+		
+		cbPayload = read(sockfd, payload, p_hdr->length);
+		if(cbPayload < 0)
+		{
+			perror("socket");
+			free(payload);
+			return -1;
+		}
+		
+		if(cbPayload != p_hdr->length)
+		{
+			sprintf(err_msg, "Data length Incorrect. need: %u, recv: %u.\n", 
+				p_hdr->length, cbPayload);
+			fprintf(stderr, "%s", err_msg);
+			free(payload);
+			return 0;
+		}
+		
+		
+		
+		
+	}
+	
+	hash256(payload, cbPayload, p_hash->vch);
+	// verify checksum 
+	if(0 != memcmp(&p_hash->vch[0], &p_hdr->checksum, 4))
+	{
+		sprintf(err_msg, "checksum error.\n");
+		fprintf(stderr, "%s", err_msg);
+		free(payload);
+		return 0;
+	}
+	
+	*pp_payload = payload;
+	*p_cbPayload = cbPayload;
+	
+	return (ssize_t)(cbPayload + sizeof(SATOSHI_MESSAGE_HEADER_t));
+}
+
+//** dump_msg_hdr
+//** if (unknown type) RETCODE = -1;
+static RETCODE dump_msg_hdr(const SATOSHI_MESSAGE_HEADER_t * p_hdr)
+{
+	const char * p = "known type";
+	RETCODE ret = 0;
+	if(satoshi_magic_main == p_hdr->magic) p = "bitcoin";
+	else if(satoshi_magic_testnet == p_hdr->magic) p = "testnet";
+	else if(satoshi_magic_testnet3 == p_hdr->magic) p = "testnet3";
+	else if(satoshi_magic_namecoin == p_hdr->magic) p = "namecoin";
+	else 
+	{
+		ret = -1;
+	}
+	printf("%s\n", p);
+	return ret;
+}
+
+ssize_t send_error_msg(int sockfd, SATOSHI_MESSAGE_HEADER_t * p_hdr, const char * errText)
+{
+	assert(NULL != p_hdr);
+	ssize_t cb = 0;
 	char json[4096] = "";
 	char * p = json;
+	uint32_t cbJson;	
+	hash256_t h_checksum;
+	char szHash[65];
+	uint32_t cbHash;
+	const char * status = "error";
 	
-	int cbWrite = 0;
+	p_hdr->command[sizeof(p_hdr->command) - 1] = '\0';	
+	cbHash = sizeof(szHash);
+	bin2hex(&h_checksum.vch[0], 32, szHash, &cbHash, 0);
+	
+	p += sprintf(p, "[\"status\": \"%s\","
+					" \"command\": \"[%s] - %s\","
+					" \"hash\": \"%s\"]",
+					status,
+					p_hdr->command, err_msg, 
+					szHash
+					);
+	*p++ = '\0';
+	cbJson = p - json;				
+	
+	uint32_t magic = p_hdr->magic;
+	
+	memset(p_hdr, 0, sizeof(SATOSHI_MESSAGE_HEADER_t));	
+	p_hdr->magic = magic;
+	
+	strncpy(p_hdr->command, MSG_DEBUG, sizeof(p_hdr->command));
+	
+	cb = send_message(sockfd, p_hdr, json, cbJson);
+	return cb;
+}
+
+int  start_debug(int sockfd, struct sockaddr_storage * client_addr)
+{	
+	printf("start debug...\n");	
+	// Todo: dump client addr info
+	// ...
+		
+	ssize_t cb;
+	unsigned char * payload;
+	uint32_t cbPayload;
+	SATOSHI_MESSAGE_HEADER_t msg_hdr;
+	
+	#define STATUS_JSON_MAX_SIZE (4096)
+	char * json = NULL;
+	uint32_t cbJson;
+	char * p;
+	const char * status = "ok";
+	
+	hash256_t h_checksum;
+	char szHash[65] = "";
+	uint32_t cbHash;
+	
+	json = (char *)malloc(STATUS_JSON_MAX_SIZE);
+	assert(NULL != json);
+		
+	
 	while(1)
 	{
-		cb = recv(new_fd, buffer, sizeof(buffer) - 1, 0);
-		if(cb < 0 || 0 == cb) 
-		{
-			printf("cb = %d, disconnected.\n", cb);
+		payload = NULL;
+		cbPayload = 0;
+		memset(&msg_hdr, 0, sizeof(msg_hdr));
+		memset(&h_checksum, 0, sizeof(h_checksum));
+		
+		// recv the request from the client
+		cb = recv_message(sockfd, &msg_hdr, &payload, &cbPayload, &h_checksum);
+		if(cb <= 0)
+		{	
+			if(0 == cb) // maybe a data format error
+			{
+				send_error_msg(sockfd, &msg_hdr, err_msg);
+			}
 			break;
 		}
 		
-	//	buffer[4096] = 0;
-		printf("cb = %d\n", cb);
-		if(cb) 
+		msg_hdr.command[11] = '\0';
+		printf("==== recv command: [%s], %d bytes received.\n", msg_hdr.command, (int)cb);
+		
+		// parse message header
+		if(-1 == dump_msg_hdr(&msg_hdr))
 		{
-			buffer[cb] = 0;
-			printf("msg(%d): %s\n", cb, (char *)buffer);
-			if(strcmp((char *)buffer, "debug_exit") == 0)
+			send_error_msg(sockfd, &msg_hdr, "unknown network type");
+			continue;
+		}
+		
+		// send response to the client		
+		printf("==== send response ...\n");
+		if(strncmp(msg_hdr.command, SATOSHI_MESSAGE_COMMAND_VERSION, sizeof(msg_hdr.command)) == 0)
+		{
+			// response on "version" command
+			// should send "version" command and "verack" command
+			uint32_t magic = msg_hdr.magic;
+			const char * user_agent = SERVER_DEBUG_USER_AGENT;
+			uint32_t cbUserAgent = strlen(user_agent) + 1; // include terminated '\0'
+			SATOSHI_MESSAGE_VERSION_t * p_ver = SATOSHI_MESSAGE_VERSION_new((unsigned char *)user_agent, cbUserAgent, 1, 1);
+			uint32_t cbVer = 0;
+			assert(NULL != p_ver);
+			
+			cbVer = SATOSHI_MESSAGE_VERSION_calc_size(p_ver);
+			
+			memset(&msg_hdr, 0, sizeof(msg_hdr));
+			msg_hdr.magic = magic;
+			strncpy(msg_hdr.command, SATOSHI_MESSAGE_COMMAND_VERSION, sizeof(msg_hdr.command));
+			
+			
+			// send "version" command
+			printf("send version: %p(%u bytes)...\n", p_ver, cbVer);
+			cb = send_message(sockfd, &msg_hdr, p_ver, cbVer);
+			if(cb <= 0)
 			{
+				// an error occured
+				SATOSHI_MESSAGE_VERSION_free(p_ver);
 				break;
 			}
-			cbWrite = sprintf(p, "[\"status\": \"ok\", \"message\": \"debug\"]");
-			p += cbWrite;
+			SATOSHI_MESSAGE_VERSION_free(p_ver);
+			printf("======== send version: %d bytes\n", (int)cb);
 			
-			cb = send(new_fd, json, cbWrite, 0);
-			if(cb != cbWrite) break;
+			
+			
+			// send "verack" command
+			memset(&msg_hdr, 0, sizeof(msg_hdr));
+			msg_hdr.magic = magic;
+			strncpy(msg_hdr.command, SATOSHI_MESSAGE_COMMAND_VERACK, sizeof(msg_hdr.command));
+			
+			cb = send_message(sockfd, &msg_hdr, NULL, 0);
+			if(cb <= 0)
+			{
+				// an error occured
+				fprintf(stderr, "send_message verack error.\n");
+				break;
+			}
+			
+			printf("======== send verack: %d bytes\n", (int)cb);
+			
+		}else
+		{
+			// send debug status
+			p = json;
+			status = "ok";
+			msg_hdr.command[sizeof(msg_hdr.command) - 1] = '\0';
+			
+			cbHash = sizeof(szHash);
+			bin2hex(&h_checksum.vch[0], 32, szHash, &cbHash, 0);
+			
+			p += sprintf(p, "[\"status\": \"%s\","
+							" \"command\": \"[%s]\","
+							" \"hash\": \"%s\"]",
+							status,
+							msg_hdr.command,  
+							szHash
+							);
+			*p++ = '\0';	
+			cbJson = p - json;
+			
+			uint32_t magic = msg_hdr.magic;
+			memset(&msg_hdr, 0, sizeof(msg_hdr));
+			
+			msg_hdr.magic = magic;
+			strncpy(msg_hdr.command, MSG_DEBUG, sizeof(msg_hdr.command));
+			
+			cb = send_message(sockfd, &msg_hdr, json, cbJson);
+			
+			printf("send status: %d bytes sent.\n", (int)cb);			
 		}
 	}
-	
+	free(json);
 	return 0;
 }
