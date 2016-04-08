@@ -233,7 +233,7 @@ size_t bin2hex(const void * from, size_t cb_from, char * to)
 		to[2 * i] = _hex[(p_from[i] >> 4) & 0x0F];
 		to[2 * i + 1] = _hex[(p_from[i] & 0x0F)];
 	}
-	to[i] = '\0';
+	to[cb] = '\0';
 	return cb;
 	
 }
