@@ -47,6 +47,9 @@
 #include "chutil.h"
 
 #include "satoshi_block.h"
+#include "hmac_sha256.h"
+#include "sha512.h"
+#include "hmac_sha512.h"
 
 int quit;
 
@@ -164,7 +167,7 @@ static void my_fclose(void * p)
 {
 	if(NULL == p) return;
 	FILE * fp = *(FILE **)p;
-	fclose(fp);
+	if(fp) fclose(fp);
 }
 
 
@@ -233,7 +236,7 @@ static const unsigned char * parse_block(block_chain_t * bc,
 
 static bool on_parse_block(block_chain_t * bc, block_parser_t * bp)
 {
-	static int height = 0;
+	//~ static int height = 0;
 	//~ log_printf("bc = %p, bp = %p\n", bc, bp);
 	chain_node_t * node = NULL;
 	if(bc->blocks[0] == NULL)
@@ -251,7 +254,7 @@ static bool on_parse_block(block_chain_t * bc, block_parser_t * bp)
 	node->file_index = bp->file_index;
 	node->file_pos = bp->file_pos;
 	
-	++height;
+	//~ ++height;
 	//~ if(height > 10000) 
 	//~ {
 		//~ return false;
@@ -270,7 +273,7 @@ int parse_blocks(block_chain_t * bc, const char * data_path, int file_index)
 	
 	
 	// AUTO_### : auto cleanup	 
-	AUTO_FCLOSE FILE * fp;	
+	AUTO_FCLOSE FILE * fp = NULL;	
 	AUTO_FREE unsigned char * buffer = malloc(BUFFER_SIZE);
 	assert(NULL != buffer);
 	
@@ -334,9 +337,46 @@ int parse_blocks(block_chain_t * bc, const char * data_path, int file_index)
 
 block_chain_t main_chain[1];
 
+void test_hmac()
+{
+	hmac_sha256_ctx_t ctx;
+	unsigned char hash[32];
+	const char key[] = "key";
+	const char msg[] = "The quick brown fox jumps over the lazy dog";
+	
+	hmac_sha256_init(&ctx, (unsigned char *)key, strlen(key));
+	hmac_sha256_update(&ctx, (unsigned char *)msg, strlen(msg));
+	hmac_sha256_final(&ctx, hash);
+	
+	dump(hash, 32);
+	
+	hmac_sha256_init(&ctx, (unsigned char *)NULL, 0);
+	hmac_sha256_update(&ctx, (unsigned char *)NULL, 0);
+	hmac_sha256_final(&ctx, hash);
+	
+	dump(hash, 32);
+	
+	unsigned char h512[64];
+	sha512_ctx_t sha512;
+	sha512_init(&sha512);
+	sha512_update(&sha512, (unsigned char *)msg, strlen(msg));
+	//~ sha512_update(&sha512, (unsigned char *)NULL, 0);
+	sha512_final(&sha512, h512);
+	dump(h512, 64);
+	
+	
+	hmac_sha512_ctx_t ctx5;
+	hmac_sha512_init(&ctx5, (unsigned char *)key, strlen(key));
+	hmac_sha512_update(&ctx5, (unsigned char *)msg, strlen(msg));
+	hmac_sha512_final(&ctx5, h512);
+	dump(h512, 64);
+}
+
 int main(int argc, char **argv)
 {
-	register_sig_handler(NULL, 0, NULL, NULL);
+	test_hmac();
+	//~ return 0;
+	//~ register_sig_handler(NULL, 0, NULL, NULL);
 	
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stdin, NULL, _IONBF, 0);
@@ -347,7 +387,7 @@ int main(int argc, char **argv)
 	main_chain->on_parse_block = on_parse_block;
 	
 	int i;
-	for(i = 0; i < 1; ++i)
+	for(i = 0; i < 3; ++i)
 	{
 		parse_blocks(main_chain, "blocks", i);
 	}
@@ -396,42 +436,42 @@ int main(int argc, char **argv)
 	}
 	
 	
-	{
-		i = 0;
-		chain_node_list list = main_chain->blocks[i];
-		if(NULL != list)
-		{
-			chain_node_t * node = list;
-			while(NULL != node)
-			{
-				printf("%.5d: file_index: %d, file_pos: %ld(%.8x), hash: ", 
-						i, 
-						node->file_index, node->file_pos, 
-						(int)node->file_pos); dump(node->hash, 32);
-				node = node->next;
-			}
-			
-			FILE * fp = fopen("blocks/blk00000.dat", "rb");
-			assert(NULL != fp);
-			
-			unsigned char buffer[4096];
-			unsigned char * p = buffer;
-			//~ unsigned char * p_end = buffer + sizeof(buffer);
-			ssize_t cb = fread(buffer, 1, sizeof(buffer), fp);
-			assert(cb == sizeof(buffer));
-			block_file_header_t * p_filehdr = (block_file_header_t *)p;
-			p += sizeof(block_file_header_t);
-			
-			for(i = 0; i < p_filehdr->length; ++i)
-			{
-				printf("0x%.2x, ", p[i]);
-			}
-			
-			
-			fclose(fp);
-		}
-	}
-	
+	//~ {
+		//~ i = 0;
+		//~ chain_node_list list = main_chain->blocks[i];
+		//~ if(NULL != list)
+		//~ {
+			//~ chain_node_t * node = list;
+			//~ while(NULL != node)
+			//~ {
+				//~ printf("%.5d: file_index: %d, file_pos: %ld(%.8x), hash: ", 
+						//~ i, 
+						//~ node->file_index, node->file_pos, 
+						//~ (int)node->file_pos); dump(node->hash, 32);
+				//~ node = node->next;
+			//~ }
+			//~ 
+			//~ FILE * fp = fopen("blocks/blk00000.dat", "rb");
+			//~ assert(NULL != fp);
+			//~ 
+			//~ unsigned char buffer[4096];
+			//~ unsigned char * p = buffer;
+			// unsigned char * p_end = buffer + sizeof(buffer);
+			//~ ssize_t cb = fread(buffer, 1, sizeof(buffer), fp);
+			//~ assert(cb == sizeof(buffer));
+			//~ block_file_header_t * p_filehdr = (block_file_header_t *)p;
+			//~ p += sizeof(block_file_header_t);
+			//~ 
+			//~ for(i = 0; i < p_filehdr->length; ++i)
+			//~ {
+				//~ printf("0x%.2x, ", p[i]);
+			//~ }
+			//~ 
+			//~ 
+			//~ fclose(fp);
+		//~ }
+	//~ }
+	//~ 
 	
 	
 	block_chain_release(main_chain);

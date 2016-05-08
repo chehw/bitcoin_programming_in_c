@@ -170,8 +170,8 @@ static void bitcoin_consensus_init(void)
 		
 		
 	// init testnet_consensus
-	static const char testnet_bip34_hash_be[65] = "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8";
-	unsigned char hash[32];
+	//~ static const char testnet_bip34_hash_be[65] = "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8";
+	//~ unsigned char hash[32];
 	testnet_consensus.max_block_size = 1000000;
 	testnet_consensus.max_block_sigops = mainnet_consensus.max_block_size / 50;
 	testnet_consensus.coinbase_maturify = 100;

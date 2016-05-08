@@ -107,6 +107,7 @@ void block_chain_release(block_chain_t * bc)
 			bc->blocks[i] = NULL;
 		}
 	}
+	tdestroy(bc->root, node_cleanup);
 	tdestroy(bc->chain_root, node_cleanup);
 	tdestroy(bc->pending_root, pending_cleanup);
 }

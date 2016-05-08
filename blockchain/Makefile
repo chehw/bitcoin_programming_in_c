@@ -8,6 +8,7 @@ CFLAGS = -I. -Ibase
 CFLAGS += -g -Wall -D_GNU_SOURCE
 CFLAGS += -D_DEBUG
 CFLAGS += $(shell pkg-config --cflags json-c)
+CFLAGS += -O6
 
 LIBS = -lpthread
 LIBS += $(shell pkg-config --libs json-c)

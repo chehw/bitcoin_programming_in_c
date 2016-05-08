@@ -104,6 +104,23 @@ static inline size_t varint_calc_size(uint64_t value)
 	return 9;
 }
 
+static inline uint16_t bytes_to_uint16_le(const unsigned char * p)
+{
+	return (((uint16_t)p[0]) | (((uint16_t)p[1]) << 8));
+}
+static inline uint32_t bytes_to_uint32_le(const unsigned char * p)
+{
+	return (((uint32_t)p[0]) | (((uint32_t)p[1]) << 8) | (((uint32_t)p[2]) << 16) | (((uint32_t)p[3]) << 24));
+}
+static inline uint64_t bytes_to_uint64_le(const unsigned char * p)
+{
+	return (((uint64_t)p[0]) | (((uint64_t)p[1]) << 8) | 
+			(((uint64_t)p[2]) << 16) | (((uint64_t)p[3]) << 24) | 
+			(((uint64_t)p[4]) << 32) | (((uint64_t)p[5]) << 40) | 
+			(((uint64_t)p[6]) << 48) | (((uint64_t)p[7]) << 56));
+}
+
+
 static inline varint_t * varint_init(uint64_t value)
 {
 	size_t size = varint_calc_size(value);
@@ -113,9 +130,13 @@ static inline varint_t * varint_init(uint64_t value)
 	switch(size)
 	{
 		case 1: vi->vch[0] = (uint8_t)value; break;
-		case 3: vi->vch[0] = 0xFD; *(uint16_t *)(&vi->vch[1]) = (uint16_t)value; break;
-		case 5: vi->vch[0] = 0xFE; *(uint32_t *)(&vi->vch[1]) = (uint32_t)value; break;
-		case 9: vi->vch[0] = 0xFF; *(uint64_t *)(&vi->vch[1]) = (uint64_t)value; break;
+		//~ case 3: vi->vch[0] = 0xFD; *(uint16_t *)(&vi->vch[1]) = (uint16_t)value; break;
+		//~ case 5: vi->vch[0] = 0xFE; *(uint32_t *)(&vi->vch[1]) = (uint32_t)value; break;
+		//~ case 9: vi->vch[0] = 0xFF; *(uint64_t *)(&vi->vch[1]) = (uint64_t)value; break;		
+		case 3: vi->vch[0] = 0xFD; memcpy(&vi->vch[1], &value, 2); break; 
+		case 5: vi->vch[0] = 0xFE; memcpy(&vi->vch[1], &value, 4); break; 
+		case 9: vi->vch[0] = 0xFF; memcpy(&vi->vch[1], &value, 8); break; 
+		
 	}
 	return vi;
 }
@@ -137,9 +158,13 @@ static inline varint_t * varint_set_value(varint_t * vi, uint64_t value)
 	switch(size)
 	{
 		case 1: vi->vch[0] = (uint8_t)value; break;
-		case 3: vi->vch[0] = 0xFD; *(uint16_t *)(&vi->vch[1]) = (uint16_t)value; break;
-		case 5: vi->vch[0] = 0xFE; *(uint32_t *)(&vi->vch[1]) = (uint32_t)value; break;
-		case 9: vi->vch[0] = 0xFF; *(uint64_t *)(&vi->vch[1]) = (uint64_t)value; break;
+		//~ case 3: vi->vch[0] = 0xFD; *(uint16_t *)(&vi->vch[1]) = (uint16_t)value; break;
+		//~ case 5: vi->vch[0] = 0xFE; *(uint32_t *)(&vi->vch[1]) = (uint32_t)value; break;
+		//~ case 9: vi->vch[0] = 0xFF; *(uint64_t *)(&vi->vch[1]) = (uint64_t)value; break;
+		case 3: vi->vch[0] = 0xFD; memcpy(&vi->vch[1], &value, 2); break; 
+		case 5: vi->vch[0] = 0xFE; memcpy(&vi->vch[1], &value, 4); break; 
+		case 9: vi->vch[0] = 0xFF; memcpy(&vi->vch[1], &value, 8); break; 
+		
 	}
 	return vi;
 }
@@ -162,11 +187,14 @@ static inline uint64_t varint_get_value(const varint_t * vi)
 	if(vi->vch[0] < 0xFD) return (uint64_t)vi->vch[0];
 	switch(vi->vch[0])
 	{
-		case 0xFD: return *(uint16_t *)(&vi->vch[1]);
-		case 0xFE: return *(uint32_t *)(&vi->vch[1]);
+		//~ case 0xFD: return *(uint16_t *)(&vi->vch[1]);
+		//~ case 0xFE: return *(uint32_t *)(&vi->vch[1]);
+		case 0xFD: return bytes_to_uint16_le(&vi->vch[1]); 
+		case 0xFE: return bytes_to_uint32_le(&vi->vch[1]); 
 		default: break;
 	}
-	return *(uint64_t *)(&vi->vch[1]);
+	//~ return *(uint64_t *)(&vi->vch[1]);
+	return bytes_to_uint64_le(&vi->vch[1]); 
 }
 
 
@@ -269,7 +297,8 @@ static inline int satoshi_addr_legacy_set_ip(satoshi_addr_legacy_t * addr, const
 		memset(addr->ip, 0, 10);
 		addr->ip[10] = 0xFF;
 		addr->ip[11] = 0xFF;
-		*(uint32_t *)&addr->ip[12] = sin->sin_addr.s_addr;
+		//~ *(uint32_t *)&addr->ip[12] = sin->sin_addr.s_addr;
+		memcpy(&addr->ip[12], &sin->sin_addr.s_addr, 4);
 		addr->port = sin->sin_port;		
 		return 0;
 	}else if(sa->sa_family == AF_INET6)

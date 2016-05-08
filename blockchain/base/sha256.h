@@ -2,8 +2,6 @@
 #define _SHA256_H_
 
 #include <stdint.h>
-#include <stdlib.h>
-
 
 typedef struct sha256_ctx
 {
